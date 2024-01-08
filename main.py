@@ -7,59 +7,13 @@ import threading
 import win32api
 import win32con
 from win32api import GetAsyncKeyState
-import tkinter as tk
+from gui import *
 import ctypes
 
-model = YOLO("desktop/runs/detect/train8/weights/best.pt")
-# offset is size of monitor / 2 - size of window / 2
-bounding_box = {'top': 390, 'left': 810, 'width': 300, 'height': 300}
-
+model = YOLO("desktop/runs/detect/train13/weights/best.pt")
 sct = mss()
-root = tk.Tk()
-root.geometry("610x350")  # Set the width to 500 pixels and the height to 300 pixels
-root.title("GUI")
-
-# TODO: break tkinter into a separate file
-speedScaleX_slider = tk.Scale(root, from_=1, to=4, resolution=0.1, orient=tk.HORIZONTAL, label='speedScaleX', length=300)
-speedScaleX_slider.set(2)
-speedScaleX_slider.grid(row=0, column=0, sticky='w')
-speedScaleY_slider = tk.Scale(root, from_=1, to=4, resolution=0.1, orient=tk.HORIZONTAL, label='speedScaleY', length=300)
-speedScaleY_slider.set(4)
-speedScaleY_slider.grid(row=1, column=0, sticky='w')
-smoothing_slider = tk.Scale(root, from_=1, to=8, orient=tk.HORIZONTAL, label='steps', length=300)
-smoothing_slider.set(3)
-smoothing_slider.grid(row=2, column=0, sticky='w')
-accelX_slider = tk.Scale(root, from_=0, to=1, resolution=0.05, orient=tk.HORIZONTAL, label='accelX', length=300)
-accelX_slider.set(0.5)
-accelX_slider.grid(row=3, column=0, sticky='w')
-accelY_slider = tk.Scale(root, from_=0, to=1, resolution=0.05, orient=tk.HORIZONTAL, label='accelY', length=300)
-accelY_slider.set(0.2)
-accelY_slider.grid(row=4, column=0, sticky='w')
-fovX_slider = tk.Scale(root, from_=0, to=100, orient=tk.HORIZONTAL, label='fovX', length=300)
-fovX_slider.set(50)
-fovX_slider.grid(row=0, column=1, sticky='w')
-fovY_slider = tk.Scale(root, from_=0, to=100, orient=tk.HORIZONTAL, label='fovY', length=300)
-fovY_slider.set(30)
-fovY_slider.grid(row=1, column=1, sticky='w')
-confidence_slider = tk.Scale(root, from_=50, to=100, orient=tk.HORIZONTAL, label='confidence', length=300)
-confidence_slider.set(70)
-confidence_slider.grid(row=2, column=1, sticky='w')
-yOffset_slider = tk.Scale(root, from_=0, to=1, resolution=0.01, orient=tk.HORIZONTAL, label='Y Offset from top of BB', length=300)
-yOffset_slider.set(.14)
-yOffset_slider.grid(row=3, column=1, sticky='w')
-sleepTimer_slider = tk.Scale(root, from_=0, to=0.1, resolution=0.0005, orient=tk.HORIZONTAL, label='mouse sleep timer', length=300)
-sleepTimer_slider.set(.005)
-sleepTimer_slider.grid(row=4, column=1, sticky='w')
-aimHotkeyLabel = tk.Label(root, text="Aim hotkey:")
-aimHotkeyLabel.grid(row=5, column=0, sticky='w')
-aimHotkey = tk.Entry(root, width=20)
-aimHotkey.insert(0, 'c')
-aimHotkey.grid(row=5, column=0, sticky='e')
-exitHotkeyLabel = tk.Label(root, text="Exit program hotkey:")
-exitHotkeyLabel.grid(row=6, column=0, sticky='w')
-exitHotkey = tk.Entry(root, width=20)
-exitHotkey.insert(0, 'v')
-exitHotkey.grid(row=6, column=0, sticky='e')
+monitor_sizeX = 1920
+monitor_sizeY = 1080
 
 # move the mouse by dx, dy
 def move_mouse(dx, dy, steps, sleep_time):
@@ -68,7 +22,7 @@ def move_mouse(dx, dy, steps, sleep_time):
         time.sleep(sleep_time)
 
 # returns the bbox coords closest to the center of the screen
-def bbox_closest_to_center(results):
+def bbox_closest_to_center(results, bounding_box):
     window_center = bounding_box['width'] / 2, bounding_box['height'] / 2
     min_distance = float('inf')
     center = None  # Initialize center to None
@@ -96,16 +50,24 @@ threading.Thread(target=start_tkinter_loop).start()
 
 while True:
     root.update()
+    window_sizeX = inference_windowX.get()
+    window_sizeY = inference_windowY.get()
+    bounding_box = {'top': int((monitor_sizeY / 2) - (window_sizeY / 2)) , 'left': int((monitor_sizeX / 2) - (window_sizeX / 2)), 'width': window_sizeX, 'height': window_sizeY}
     screenshot = sct.grab(bounding_box)  # capture the screen
     img = np.array(screenshot)  # convert the screenshot to a numpy array
     img = cv2.cvtColor(img, cv2.COLOR_RGBA2RGB)  # convert the image from RGBA to RGB
 
-    # run inference
-    show = False # change to true if you want to see the bounding boxes
-    results = model.predict(img, show=show)
+    # show inference window if checkbox is checked
+    results = model.predict(img, show=show.get())
+    if not show.get():
+        try:
+            cv2.destroyWindow('image0.jpg')
+        except cv2.error:
+            # the window is already closed
+            pass
 
     # target is bbox closets to crosshair
-    target = bbox_closest_to_center(results)
+    target = bbox_closest_to_center(results, bounding_box)
 
     if target is not None:
         windowCenterX, windowCenterY = bounding_box['width'] / 2, bounding_box['height'] / 2
@@ -117,6 +79,16 @@ while True:
         # check if delta is within fov
         if (abs(dx) > fovX_slider.get() or abs(dy) > fovY_slider.get()):
             continue
+
+        # "rage mode" if target is far from crosshair
+        # TODO: continue working on this
+        if preset.get() == 'rage':
+            if (abs(round(target[0] - windowCenterX)) > 20):
+                dx = ((round(target[0] - windowCenterX) * speedScaleX_slider.get() * 1.1) / smoothing_slider.get()) * accelX_slider.get() * 1.1
+
+            if (abs(round(target[1] - windowCenterY)) > 20):
+                dy = ((round(target[1] - windowCenterY) * speedScaleY_slider.get() * 1.1) / smoothing_slider.get()) * accelY_slider.get() * 1.1
+
 
         # holding down aim hotkey
         if len(aimHotkey.get()) == 1:
